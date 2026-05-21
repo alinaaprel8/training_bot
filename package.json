@@ -1,0 +1,18 @@
+{
+  "name": "workout-telegram-bot",
+  "version": "1.0.0",
+  "description": "Telegram bot for tracking weekly workouts with Markdown files",
+  "main": "src/bot.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/bot.js",
+    "dev": "node --watch src/bot.js",
+    "test:parser": "node src/test-parser.js",
+    "test:db": "node src/test-db.js"
+  },
+  "dependencies": {
+    "grammy": "^1.22.4",
+    "dotenv": "^16.4.5",
+    "@grammyjs/menu": "^1.2.1"
+  }
+}
