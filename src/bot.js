@@ -55,6 +55,30 @@ function escapeMarkdown(text) {
     .replace(/!/g, '\\!');
 }
 
+// Helper to edit text or reply depending on message type (resilient to photo/doc messages)
+async function replyOrEdit(ctx, text, reply_markup, parse_mode = 'MarkdownV2') {
+  const message = ctx.callbackQuery?.message;
+  if (message && (message.photo || message.document)) {
+    try {
+      await ctx.api.deleteMessage(ctx.chat.id, message.message_id);
+    } catch (e) {
+      console.error('Failed to delete message:', e);
+    }
+    return ctx.reply(text, { parse_mode, reply_markup });
+  } else {
+    try {
+      return await ctx.editMessageText(text, { parse_mode, reply_markup });
+    } catch (e) {
+      console.error('Failed to edit, falling back to reply:', e);
+      // Delete old message to avoid clutter
+      try {
+        await ctx.api.deleteMessage(ctx.chat.id, message.message_id);
+      } catch (delErr) {}
+      return ctx.reply(text, { parse_mode, reply_markup });
+    }
+  }
+}
+
 // ----------------------------------------------------
 // Keyboard Generators
 // ----------------------------------------------------
@@ -255,9 +279,7 @@ bot.on('callback_query:data', async (ctx) => {
   
   if (data === 'menu:main') {
     userStates.delete(userId);
-    return ctx.editMessageText('👇 **Ваши загруженные недели:**', {
-      reply_markup: makeMainMenuKeyboard(userId)
-    });
+    return replyOrEdit(ctx, '👇 **Ваши загруженные недели:**', makeMainMenuKeyboard(userId));
   }
   
   // Week Analysis: "week:<week_number>:analysis"
@@ -275,13 +297,25 @@ bot.on('callback_query:data', async (ctx) => {
     
     const chartUrl = generateTrendChartUrl(workoutsList);
     
+    // Clean up original week menu message
+    try {
+      await ctx.api.deleteMessage(ctx.chat.id, ctx.callbackQuery.message.message_id);
+    } catch (e) {
+      console.error('Failed to delete week menu message:', e);
+    }
+
+    const analysisKeyboard = new InlineKeyboard()
+      .text('‹ К неделе', `week:${weekNumber}`)
+      .row()
+      .text('‹ К списку недель', 'menu:main');
+
     if (chartUrl) {
       try {
         if (analysisText.length <= 1024) {
           await ctx.replyWithPhoto(chartUrl, {
             caption: analysisText,
             parse_mode: 'Markdown',
-            reply_markup: new InlineKeyboard().text('‹ К неделе', `week:${weekNumber}`)
+            reply_markup: analysisKeyboard
           });
         } else {
           await ctx.replyWithPhoto(chartUrl, {
@@ -289,20 +323,20 @@ bot.on('callback_query:data', async (ctx) => {
           });
           await ctx.reply(analysisText, {
             parse_mode: 'Markdown',
-            reply_markup: new InlineKeyboard().text('‹ К неделе', `week:${weekNumber}`)
+            reply_markup: analysisKeyboard
           });
         }
       } catch (err) {
         console.error('Error sending chart photo:', err);
         await ctx.reply(analysisText + '\n\n⚠️ _Не удалось загрузить график прогресса_', {
           parse_mode: 'Markdown',
-          reply_markup: new InlineKeyboard().text('‹ К неделе', `week:${weekNumber}`)
+          reply_markup: analysisKeyboard
         });
       }
     } else {
       await ctx.reply(analysisText, {
         parse_mode: 'Markdown',
-        reply_markup: new InlineKeyboard().text('‹ К неделе', `week:${weekNumber}`)
+        reply_markup: analysisKeyboard
       });
     }
     return;
@@ -322,10 +356,7 @@ bot.on('callback_query:data', async (ctx) => {
     
     const dayAnalysisText = formatDayAnalysis(dayObj);
     
-    return ctx.reply(dayAnalysisText, {
-      parse_mode: 'Markdown',
-      reply_markup: new InlineKeyboard().text('‹ Назад к тренировке', `week:${weekNumber}:day:${dayIndex}`)
-    });
+    return replyOrEdit(ctx, dayAnalysisText, new InlineKeyboard().text('‹ Назад к тренировке', `week:${weekNumber}:day:${dayIndex}`), 'Markdown');
   }
 
   // Week Menu: "week:<week_number>"
@@ -342,10 +373,7 @@ bot.on('callback_query:data', async (ctx) => {
     text += `⏱️ Сон: *${escapeMarkdown(workout.biometrics.sleep || '—')}*\n`;
     text += `😊 Настроение: *${escapeMarkdown(workout.biometrics.mood || '—')}*`;
     
-    return ctx.editMessageText(text, {
-      parse_mode: 'MarkdownV2',
-      reply_markup: makeWeekKeyboard(workout)
-    });
+    return replyOrEdit(ctx, text, makeWeekKeyboard(workout));
   }
   
   // Day Menu: "week:<week_number>:day:<day_index>"
@@ -376,10 +404,7 @@ bot.on('callback_query:data', async (ctx) => {
       text += `\n`;
     });
     
-    return ctx.editMessageText(text, {
-      parse_mode: 'MarkdownV2',
-      reply_markup: makeDayKeyboard(weekNumber, dayIndex, dayObj)
-    });
+    return replyOrEdit(ctx, text, makeDayKeyboard(weekNumber, dayIndex, dayObj));
   }
   
   // Exercise Detail Menu: "week:<week_number>:day:<day_index>:ex:<ex_id>"
@@ -398,10 +423,7 @@ bot.on('callback_query:data', async (ctx) => {
                  `⏱️ RPE: *${escapeMarkdown(ex.rpe || 'Не указано')}*\n` +
                  `💬 Примечание: *${escapeMarkdown(ex.comment || 'Нет')}*`;
                  
-    return ctx.editMessageText(text, {
-      parse_mode: 'MarkdownV2',
-      reply_markup: makeExerciseKeyboard(weekNumber, dayIndex, exId)
-    });
+    return replyOrEdit(ctx, text, makeExerciseKeyboard(weekNumber, dayIndex, exId));
   }
   
   // Trigger RPE Selector
@@ -414,10 +436,7 @@ bot.on('callback_query:data', async (ctx) => {
     const workout = getWorkout(userId, weekNumber);
     const ex = workout?.days_data[dayIndex]?.exercises.find(e => e.id === exId);
     
-    return ctx.editMessageText(`Выберите RPE для упражнения *${escapeMarkdown(ex.name)}*:`, {
-      parse_mode: 'MarkdownV2',
-      reply_markup: makeRpeKeyboard(weekNumber, dayIndex, exId)
-    });
+    return replyOrEdit(ctx, `Выберите RPE для упражнения *${escapeMarkdown(ex.name)}*:`, makeRpeKeyboard(weekNumber, dayIndex, exId));
   }
   
   // Handle RPE Selection Action
@@ -446,10 +465,7 @@ bot.on('callback_query:data', async (ctx) => {
                  `⏱️ RPE: *${escapeMarkdown(ex.rpe || 'Не указано')}* \\(Обновлено\\)\n` +
                  `💬 Примечание: *${escapeMarkdown(ex.comment || 'Нет')}*`;
                  
-    return ctx.editMessageText(text, {
-      parse_mode: 'MarkdownV2',
-      reply_markup: makeExerciseKeyboard(weekNumber, dayIndex, exId)
-    });
+    return replyOrEdit(ctx, text, makeExerciseKeyboard(weekNumber, dayIndex, exId));
   }
   
   // Trigger Parameter input dialog
