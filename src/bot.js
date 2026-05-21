@@ -11,6 +11,11 @@ import {
   updateWorkoutDays 
 } from './db.js';
 import { parseMarkdown, generateMarkdown } from './parser.js';
+import { 
+  formatWeekAnalysis, 
+  formatDayAnalysis, 
+  generateTrendChartUrl 
+} from './analysis.js';
 
 dotenv.config();
 
@@ -83,6 +88,7 @@ function makeWeekKeyboard(workout) {
   });
   
   // Service buttons
+  keyboard.text('📊 Анализ недели', `week:${workout.week_number}:analysis`).row();
   keyboard.text('📊 Изменить биометрию', `week:${workout.week_number}:edit_bio`).row();
   keyboard.text('📥 Скачать .md', `week:${workout.week_number}:download`)
           .text('📝 Правка текстом', `week:${workout.week_number}:edit_raw`).row();
@@ -102,6 +108,7 @@ function makeDayKeyboard(weekNumber, dayIndex, dayObj) {
     keyboard.text(exText, `week:${weekNumber}:day:${dayIndex}:ex:${ex.id}`).row();
   });
   
+  keyboard.text('📊 Анализ дня', `week:${weekNumber}:day:${dayIndex}:analysis`).row();
   keyboard.text('‹ К неделе', `week:${weekNumber}`);
   return keyboard;
 }
@@ -253,8 +260,76 @@ bot.on('callback_query:data', async (ctx) => {
     });
   }
   
+  // Week Analysis: "week:<week_number>:analysis"
+  if (data.startsWith('week:') && data.endsWith(':analysis') && !data.includes(':day:')) {
+    const weekNumber = parseInt(data.split(':')[1], 10);
+    const workout = getWorkout(userId, weekNumber);
+    if (!workout) return ctx.reply('⚠️ Неделя не найдена.');
+
+    const analysisText = formatWeekAnalysis(workout);
+    
+    // Fetch history for chart
+    const workoutsList = getWorkoutsForUser(userId);
+    // Sort by week number ascending
+    workoutsList.sort((a, b) => a.week_number - b.week_number);
+    
+    const chartUrl = generateTrendChartUrl(workoutsList);
+    
+    if (chartUrl) {
+      try {
+        if (analysisText.length <= 1024) {
+          await ctx.replyWithPhoto(chartUrl, {
+            caption: analysisText,
+            parse_mode: 'Markdown',
+            reply_markup: new InlineKeyboard().text('‹ К неделе', `week:${weekNumber}`)
+          });
+        } else {
+          await ctx.replyWithPhoto(chartUrl, {
+            caption: `📊 График прогресса для Недели ${weekNumber}`
+          });
+          await ctx.reply(analysisText, {
+            parse_mode: 'Markdown',
+            reply_markup: new InlineKeyboard().text('‹ К неделе', `week:${weekNumber}`)
+          });
+        }
+      } catch (err) {
+        console.error('Error sending chart photo:', err);
+        await ctx.reply(analysisText + '\n\n⚠️ _Не удалось загрузить график прогресса_', {
+          parse_mode: 'Markdown',
+          reply_markup: new InlineKeyboard().text('‹ К неделе', `week:${weekNumber}`)
+        });
+      }
+    } else {
+      await ctx.reply(analysisText, {
+        parse_mode: 'Markdown',
+        reply_markup: new InlineKeyboard().text('‹ К неделе', `week:${weekNumber}`)
+      });
+    }
+    return;
+  }
+
+  // Day Analysis: "week:<week_number>:day:<day_index>:analysis"
+  if (data.startsWith('week:') && data.includes(':day:') && data.endsWith(':analysis')) {
+    const parts = data.split(':');
+    const weekNumber = parseInt(parts[1], 10);
+    const dayIndex = parseInt(parts[3], 10);
+    
+    const workout = getWorkout(userId, weekNumber);
+    if (!workout) return ctx.reply('⚠️ Неделя не найдена.');
+    
+    const dayObj = workout.days_data[dayIndex];
+    if (!dayObj) return ctx.reply('⚠️ День тренировки не найден.');
+    
+    const dayAnalysisText = formatDayAnalysis(dayObj);
+    
+    return ctx.reply(dayAnalysisText, {
+      parse_mode: 'Markdown',
+      reply_markup: new InlineKeyboard().text('‹ Назад к тренировке', `week:${weekNumber}:day:${dayIndex}`)
+    });
+  }
+
   // Week Menu: "week:<week_number>"
-  if (data.startsWith('week:') && !data.includes(':day:') && !data.includes(':edit_') && !data.includes(':download')) {
+  if (data.startsWith('week:') && !data.includes(':day:') && !data.includes(':edit_') && !data.includes(':download') && !data.includes(':analysis')) {
     const weekNumber = parseInt(data.split(':')[1], 10);
     const workout = getWorkout(userId, weekNumber);
     

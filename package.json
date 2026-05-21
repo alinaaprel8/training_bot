@@ -8,7 +8,8 @@
     "start": "node src/bot.js",
     "dev": "node --watch src/bot.js",
     "test:parser": "node src/test-parser.js",
-    "test:db": "node src/test-db.js"
+    "test:db": "node src/test-db.js",
+    "test:analysis": "node src/test-analysis.js"
   },
   "dependencies": {
     "grammy": "^1.22.4",
